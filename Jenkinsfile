@@ -68,20 +68,23 @@ pipeline {
         stage('Build and Push Docker Images') {
             steps {
                 script {
-                    withDockerRegistry([credentialsId: env.DOCKER_CREDENTIALS_ID, url: 'https://index.docker.io/v1/']) {
-                        env.SERVICES.split().each { service ->
-                            def imageName = "${env.DOCKER_HUB_USER}/${service.toLowerCase()}:${env.GIT_COMMIT[0..11]}"
-                            sh "docker build -t ${imageName} ${service}"
-                            
-                            // Increased retries and sleep time to handle persistent 'tls: bad record MAC' issues
-                            retry(5) {
-                                try {
+                    env.SERVICES.split().each { service ->
+                        def imageName = "${env.DOCKER_HUB_USER}/${service.toLowerCase()}:${env.GIT_COMMIT[0..11]}"
+                        sh "docker build -t ${imageName} ${service}"
+                        
+                        // Extreme retry logic for unstable networks (bad record MAC)
+                        retry(10) {
+                            try {
+                                withDockerRegistry([credentialsId: env.DOCKER_CREDENTIALS_ID, url: 'https://index.docker.io/v1/']) {
                                     sh "docker push ${imageName}"
-                                } catch (Exception e) {
-                                    echo "Push failed for ${service}, retrying in 20 seconds... (Error: ${e.getMessage()})"
-                                    sleep 20
-                                    throw e
+                                    sh "docker tag ${imageName} ${env.DOCKER_HUB_USER}/${service.toLowerCase()}:latest"
+                                    sh "docker push ${env.DOCKER_HUB_USER}/${service.toLowerCase()}:latest"
                                 }
+                            } catch (Exception e) {
+                                echo "Push failed for ${service}, clearing auth and retrying in 30 seconds... (Error: ${e.getMessage()})"
+                                sh "docker logout"
+                                sleep 30
+                                throw e
                             }
                         }
                     }
