@@ -95,7 +95,46 @@ pipeline {
         stage('Archive Artifacts') {
             steps {
                 archiveArtifacts artifacts: '**/target/*.jar', fingerprint: true, allowEmptyArchive: true
-                junit testResults: '**/target/surefire-reports/*.xml', allowEmptyResults: true
+            }
+        }
+
+        stage('Update Helm Image Tags') {
+            steps {
+                script {
+                    // Use withCredentials to safely handle the GitHub token
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GIT_TOKEN')]) {
+                        sh """
+                            # 1. Clean up old clones
+                            rm -rf helm-repo
+                            
+                            # 2. Clone the Helm repository using the token safely in an extra header to avoid URL issues
+                            git -c http.extraHeader="Authorization: Basic \$(echo -n x-access-token:\$GIT_TOKEN | base64)" \
+                                clone https://github.com/sanchitkumarsingh098931/jepkins-ci-cd.git helm-repo
+                            
+                            cd helm-repo
+                            
+                            # 3. Update the image tags in values.yaml
+                            # We use sed to find the service tag and update it
+                            # Format expected: tag: "old-tag"
+                            IMAGE_TAG="${env.GIT_COMMIT[0..11]}"
+                            sed -i "s/tag: .*/tag: \\"\$IMAGE_TAG\\"/" charts/edulearn/values.yaml
+                            
+                            # 4. Commit and Push
+                            git config user.email "jenkins@edulearn.local"
+                            git config user.name "Jenkins CI"
+                            git add charts/edulearn/values.yaml
+                            
+                            # Only commit and push if there are changes
+                            if ! git diff --cached --quiet; then
+                                git commit -m "ci: update image tags to \$IMAGE_TAG [skip ci]"
+                                git -c http.extraHeader="Authorization: Basic \$(echo -n x-access-token:\$GIT_TOKEN | base64)" \
+                                    push origin main
+                            else
+                                echo "No changes detected in Helm tags."
+                            fi
+                        """
+                    }
+                }
             }
         }
     }
