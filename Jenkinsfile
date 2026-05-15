@@ -27,6 +27,21 @@ pipeline {
             }
         }
 
+        stage('Network Diagnostics') {
+            steps {
+                script {
+                    echo "Checking network MTU and connectivity..."
+                    if (isUnix()) {
+                        sh "ip addr | grep mtu || ifconfig | grep mtu || true"
+                        sh "ping -c 3 google.com || true"
+                    } else {
+                        bat "netsh interface ipv4 show interfaces"
+                        bat "ping google.com"
+                    }
+                }
+            }
+        }
+
         stage('Build and Test Services') {
             steps {
                 script {
@@ -69,21 +84,28 @@ pipeline {
             steps {
                 script {
                     env.SERVICES.split().each { service ->
-                        def imageName = "${env.DOCKER_HUB_USER}/${service.toLowerCase()}:${env.GIT_COMMIT[0..11]}"
+                        def baseImageName = "${env.DOCKER_HUB_USER}/${service.toLowerCase()}"
+                        def imageName = "${baseImageName}:${env.GIT_COMMIT[0..11]}"
+                        
+                        echo "Building image: ${imageName}"
                         sh "docker build -t ${imageName} ${service}"
                         
                         // Extreme retry logic for unstable networks (bad record MAC)
                         retry(10) {
                             try {
                                 withDockerRegistry([credentialsId: env.DOCKER_CREDENTIALS_ID, url: 'https://index.docker.io/v1/']) {
+                                    echo "Pushing ${imageName}..."
                                     sh "docker push ${imageName}"
-                                    sh "docker tag ${imageName} ${env.DOCKER_HUB_USER}/${service.toLowerCase()}:latest"
-                                    sh "docker push ${env.DOCKER_HUB_USER}/${service.toLowerCase()}:latest"
+                                    
+                                    echo "Tagging and pushing latest..."
+                                    sh "docker tag ${imageName} ${baseImageName}:latest"
+                                    sh "docker push ${baseImageName}:latest"
                                 }
                             } catch (Exception e) {
-                                echo "Push failed for ${service}, clearing auth and retrying in 30 seconds... (Error: ${e.getMessage()})"
-                                sh "docker logout"
-                                sleep 30
+                                echo "Push failed for ${service}. Error: ${e.getMessage()}"
+                                echo "Clearing auth and waiting 45 seconds before retry..."
+                                sh "docker logout || true"
+                                sleep 45
                                 throw e
                             }
                         }
