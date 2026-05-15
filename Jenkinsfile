@@ -149,8 +149,8 @@ pipeline {
                             # Only commit and push if there are changes
                             if ! git diff --cached --quiet; then
                                 git commit -m "ci: update image tags to \$IMAGE_TAG [skip ci]"
-                                git -c http.extraHeader="Authorization: Basic \$(echo -n x-access-token:\$GIT_TOKEN | base64)" \
-                                    push origin main
+                                # Use the token in the URL for the push to ensure authentication
+                                git push https://x-access-token:\$GIT_TOKEN@github.com/sanchitkumarsingh098931/jepkins-ci-cd.git main
                             else
                                 echo "No changes detected in Helm tags."
                             fi
